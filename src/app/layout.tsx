@@ -11,7 +11,7 @@ const fontMono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
   title: { default: "AxoDraw · 可验证抽奖", template: "%s · AxoDraw" },
-  description: "基于公开随机信标、结果可复算的极简抽奖工具。",
+  description: "基于公开随机信标、结果可复算的极简抽奖与随机排序工具。",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

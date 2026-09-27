@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  InvalidLotteryParamsError,
+  parseLotteryParams,
+} from "@/lib/lottery-params";
 import { createLottery, publicLottery, saveLottery } from "@/lib/lottery-store";
 import { parseBeijingDatetimeLocal } from "@/lib/time";
 
@@ -69,25 +73,15 @@ export async function POST(request: Request) {
         { status: 403 },
       );
     const title = String(body.title || "").trim();
-    const entries = String(body.entriesText || "")
+    const items = String(body.entriesText || "")
       .split(/\r?\n/)
       .map((item) => item.trim())
       .filter(Boolean);
     if (!title)
-      return NextResponse.json({ error: "请填写抽奖标题" }, { status: 400 });
-    if (entries.length < 2)
+      return NextResponse.json({ error: "请填写标题" }, { status: 400 });
+    if (items.length < 2)
       return NextResponse.json(
         { error: "至少需要 2 条参与值" },
-        { status: 400 },
-      );
-    const winnerCount = Number(body.winnerCount);
-    if (
-      !Number.isInteger(winnerCount) ||
-      winnerCount < 1 ||
-      winnerCount > entries.length
-    )
-      return NextResponse.json(
-        { error: "中奖人数需在 1 与参与值数量之间" },
         { status: 400 },
       );
     // 表单提交的 datetime-local 值统一按北京时间（UTC+8）解释，再以 ISO(UTC) 存储
@@ -97,19 +91,34 @@ export async function POST(request: Request) {
         { error: "截止时间需晚于当前时间（按北京时间）" },
         { status: 400 },
       );
-    const normalizedEntries =
-      body.duplicatePolicy === "dedupe" ? [...new Set(entries)] : entries;
-    if (normalizedEntries.length < winnerCount)
+    const dedupe = body.duplicatePolicy === "dedupe";
+    const normalizedEntries = dedupe ? [...new Set(items)] : items;
+    let params;
+    try {
+      params = parseLotteryParams(body, normalizedEntries.length);
+    } catch (cause) {
+      const message =
+        cause instanceof InvalidLotteryParamsError
+          ? cause.message
+          : "请求格式无效";
       return NextResponse.json(
-        { error: "去重后参与值不足" },
+        {
+          error:
+            dedupe && normalizedEntries.length < items.length
+              ? `去重后${message}`
+              : message,
+        },
         { status: 400 },
       );
+    }
     const created = createLottery({
       title,
       description: String(body.description || "").trim(),
       deadline: deadline.toISOString(),
-      winnerCount,
-      duplicatePolicy: body.duplicatePolicy === "dedupe" ? "dedupe" : "keep",
+      mode: params.mode,
+      winnerCount: params.winnerCount,
+      groupCount: params.groupCount,
+      duplicatePolicy: dedupe ? "dedupe" : "keep",
       entries: normalizedEntries,
     });
     await saveLottery(created.lottery);

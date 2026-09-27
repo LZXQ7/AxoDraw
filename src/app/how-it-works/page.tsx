@@ -15,7 +15,7 @@ const features = [
   {
     icon: Lock,
     title: "名单公开承诺",
-    text: "标题、截止时间和中奖人数创建时固定；名单每次修改都会更新公开 commitment，截止后锁定。",
+    text: "标题、截止时间和结果模式创建时固定；名单每次修改都会更新公开 commitment，截止后锁定。",
   },
   {
     icon: Timer,
@@ -25,7 +25,25 @@ const features = [
   {
     icon: Database,
     title: "结果公开验证",
-    text: "随机数、签名、名单承诺、摘要与中奖名单都在公开页面，随时可查。",
+    text: "随机数、签名、名单承诺、摘要与结果名单都在公开页面，随时可查。",
+  },
+];
+
+const resultModes = [
+  {
+    label: "随机抽奖",
+    text: "取无偏洗牌结果的前 N 项作为中奖名单，N 在创建时写入公开承诺。",
+    detail: "01 · service-002  02 · service-003  03 · service-001",
+  },
+  {
+    label: "随机排序",
+    text: "输出完整的无偏随机顺序，全部参与值出现且仅出现一次。",
+    detail: "01 · service-014  02 · service-011  03 · service-018  …",
+  },
+  {
+    label: "分组随机排序",
+    text: "先随机排序，再按顺序连续均分：各组人数相差不超过 1，组内顺序同样随机。",
+    detail: "第 1 组 3 人 · 第 2 组 3 人 · 第 3 组 2 人",
   },
 ];
 
@@ -50,13 +68,13 @@ const beaconFacts = [
 const drawSteps = [
   { number: "01", text: "生成承诺：按固定 JSON 字段顺序编码全部抽奖参数和参与值，commitment = sha256(canonical lottery)。" },
   { number: "02", text: "生成种子：digest = sha256(randomness | commitment | \"deterministic-v2\")。用 digest 作为 HMAC-SHA-256 密钥，通过递增计数器生成相互独立的随机块。" },
-  { number: "03", text: "无偏洗牌：对每一步使用拒绝采样得到等概率下标，再执行 Fisher–Yates；记录名单、commitment、digest、round、randomness 与 signature。" },
+  { number: "03", text: "无偏洗牌：对每一步使用拒绝采样得到等概率下标，再执行 Fisher–Yates；洗牌结果按模式解释为名单、完整顺序或分组，并记录 commitment、digest、round、randomness 与 signature。" },
 ];
 
 const verifySteps = [
   { number: "01", text: "由截止时间重新计算唯一 round，向 drand 获取该轮记录，并用固定 quicknet 公钥验证 BLS 签名。" },
   { number: "02", text: "规范化全部抽奖参数与 entries，重算 commitment、digest，并用 deterministic-v2 重跑无偏洗牌。" },
-  { number: "03", text: "只有 round、signature、randomness、commitment、digest 与 winners 全部一致，才显示验证通过。" },
+  { number: "03", text: "只有 round、signature、randomness、commitment、digest 与结果名单（分组模式下还包括分组）全部一致，才显示验证通过。" },
 ];
 
 const limits = [
@@ -71,17 +89,17 @@ export default function HowItWorksPage() {
     <main className="mx-auto w-full max-w-6xl px-4 pb-24 pt-10 sm:px-6 lg:px-8 lg:pt-14">
       <div className="flex flex-col gap-3">
         <Badge variant="secondary" className="w-fit">运行原理</Badge>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">抽奖如何做到公开可验证</h1>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">抽奖与随机排序如何做到公开可验证</h1>
         <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-          一场抽奖从创建到开奖，公开随机信标、名单承诺与确定性算法；任何人都能复算结果，并清楚看到系统仍保留的部署方信任边界。
+          从创建到出结果，公开随机信标、名单承诺与确定性算法；随机抽奖、随机排序与分组随机排序都能被任何人复算，同时清楚说明系统仍保留的部署方信任边界。
         </p>
       </div>
 
       <section className="mt-10 flex flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <h2 className="text-2xl font-semibold tracking-tight">一场抽奖的完整流程</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">从创建到出结果的完整流程</h2>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            创建时锁定标题、截止时间与中奖人数；截止前可修改参与值并更新 commitment，截止 10 分钟后开奖解锁，结果由固定的 drand 轮次唯一确定并写入公开记录。
+            创建时锁定标题、截止时间与结果模式；截止前可修改参与值并更新 commitment，截止 10 分钟后解锁，结果由固定的 drand 轮次唯一确定并写入公开记录。
           </p>
         </div>
         <figure className="rounded-2xl border bg-card p-4 sm:p-6">
@@ -135,7 +153,7 @@ export default function HowItWorksPage() {
         <div className="flex flex-col gap-2">
           <h2 className="text-2xl font-semibold tracking-tight">结果如何产生：完全确定性的算法</h2>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            中奖名单不是随机过程，而是把公开随机数喂给一个固定算法算出来的。输入一样，输出永远一样。
+            名单、顺序与分组都不是随机的黑箱，而是把公开随机数喂给一个固定算法算出来的。输入一样，输出永远一样。
           </p>
         </div>
         <figure className="rounded-2xl border bg-card p-4 sm:p-6">
@@ -152,6 +170,33 @@ export default function HowItWorksPage() {
         <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
           deterministic-v2 不再使用旧版有低位相关性的 LCG。HMAC 计数器为每一步生成新随机块，拒绝采样保证每个交换下标拥有相同数量的 256 位原像；相同输入仍会得到唯一、可复算的名单。
         </p>
+      </section>
+
+      <section className="mt-14 flex flex-col gap-6">
+        <div className="flex flex-col gap-2">
+          <h2 className="text-2xl font-semibold tracking-tight">三种结果模式</h2>
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+            三种模式共用同一次无偏洗牌，区别只在如何解释这个顺序。模式与分组数都会写入公开承诺（非抽奖模式使用 commitment-v2），出结果后即使只改写模式，承诺、digest 与结果名单也会全部对不上，验证直接失败。
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {resultModes.map((mode) => (
+            <div key={mode.label} className="flex flex-col gap-2.5 rounded-2xl border bg-card p-5">
+              <p className="text-sm font-semibold">{mode.label}</p>
+              <p className="text-xs leading-5 text-muted-foreground">{mode.text}</p>
+              <p className="mt-auto pt-1 font-mono text-[10.5px] leading-5 text-muted-foreground">{mode.detail}</p>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-col gap-3 rounded-2xl border bg-muted/40 p-5">
+          <p className="text-sm font-semibold">只排序？不必发起</p>
+          <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
+            「随机排序」页面把同一套洗牌搬到浏览器本地：粘贴名单即出结果，随机源是 crypto，不产生公开记录，因此也不需要信标、承诺和截止时间。需要「谁都能复算」的结果时，才走上面的发起流程（页面用公开信标抽奖，接口的 shuffle / group 模式同样会写入可验证记录）。
+          </p>
+          <Button variant="outline" size="sm" className="w-fit" nativeButton={false} render={<Link href="/sort" />}>
+            打开随机排序<ArrowUpRight data-icon="inline-end" />
+          </Button>
+        </div>
       </section>
 
       <section className="mt-14 flex flex-col gap-6">
@@ -191,11 +236,12 @@ export default function HowItWorksPage() {
           <div className="flex flex-col gap-1">
             <p className="text-sm font-semibold">想亲眼看一次？</p>
             <p className="text-xs leading-5 text-muted-foreground">
-              示例抽奖 AXO-7K4M 已开奖，公开页面包含完整的 randomness、signature 与 digest。
+              示例 AXO-7K4M（抽奖）、AXO-7K4S（随机排序）、AXO-7K4G（分组）均已出结果，公开页面包含完整的 randomness、signature 与 digest。
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
             <Button nativeButton={false} render={<Link href="/?code=AXO-7K4M" />}>查看示例抽奖<ArrowUpRight data-icon="inline-end" /></Button>
+            <Button variant="outline" nativeButton={false} render={<Link href="/sort" />}>随机排序</Button>
             <Button variant="outline" nativeButton={false} render={<Link href="/create" />}>发起抽奖</Button>
           </div>
         </CardContent>

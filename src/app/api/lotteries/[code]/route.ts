@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import {
+  InvalidLotteryParamsError,
+  parseLotteryParams,
+} from "@/lib/lottery-params";
+import {
   getLottery,
   publicLottery,
   refreshEntriesCommitment,
@@ -66,13 +70,31 @@ export async function PATCH(
     );
   const normalized =
     lottery.duplicatePolicy === "dedupe" ? [...new Set(items)] : items;
-  if (normalized.length < lottery.winnerCount)
+  // 模式、名额与分组数创建后固定，这里只重新校验它们在最新名单下依然成立。
+  let params;
+  try {
+    params = parseLotteryParams(
+      {
+        mode: lottery.mode,
+        winnerCount: lottery.winnerCount,
+        groupCount: lottery.groupCount,
+      },
+      normalized.length,
+    );
+  } catch (cause) {
+    const message =
+      cause instanceof InvalidLotteryParamsError
+        ? cause.message
+        : "请求格式无效";
     return NextResponse.json(
-      { error: "去重后参与值不足中奖名额" },
+      { error: normalized.length < items.length ? `去重后${message}` : message },
       { status: 400 },
     );
+  }
 
   lottery.entries = normalized;
+  lottery.winnerCount = params.winnerCount;
+  lottery.groupCount = params.groupCount;
   refreshEntriesCommitment(lottery, new Date(updatedAt).toISOString());
   await saveLottery(lottery);
   return NextResponse.json({ lottery: publicLottery(lottery) });

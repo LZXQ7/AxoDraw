@@ -9,7 +9,13 @@ import { Tabs, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs
 export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
-  const active = pathname.startsWith("/create") ? "create" : pathname.startsWith("/how-it-works") ? "how" : "results";
+  const active = pathname.startsWith("/create")
+    ? "create"
+    : pathname.startsWith("/how-it-works")
+      ? "how"
+      : pathname.startsWith("/sort")
+        ? "sort"
+        : "results";
 
   return (
     <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur-md">
@@ -24,12 +30,13 @@ export function SiteHeader() {
           />
           <span className="hidden text-sm font-semibold tracking-tight sm:block">AxoDraw</span>
         </Link>
-        <Tabs value={active} onValueChange={(value) => router.push(value === "create" ? "/create" : value === "how" ? "/how-it-works" : "/")}>
-          <TabsList variant="line" className="gap-1">
+        <Tabs value={active} onValueChange={(value) => router.push(value === "create" ? "/create" : value === "how" ? "/how-it-works" : value === "sort" ? "/sort" : "/")}>
+          <TabsList variant="line" className="gap-0.5 sm:gap-1">
             <TabsIndicator />
-            <TabsTrigger value="results" className="px-3">抽奖结果</TabsTrigger>
-            <TabsTrigger value="create" className="px-3">发起抽奖</TabsTrigger>
-            <TabsTrigger value="how" className="px-3">运行原理</TabsTrigger>
+            <TabsTrigger value="sort" className="px-2 sm:px-3">随机排序</TabsTrigger>
+            <TabsTrigger value="results" className="px-2 sm:px-3">结果查询</TabsTrigger>
+            <TabsTrigger value="create" className="px-2 sm:px-3">发起</TabsTrigger>
+            <TabsTrigger value="how" className="px-2 sm:px-3">运行原理</TabsTrigger>
           </TabsList>
         </Tabs>
         <ThemeToggle />

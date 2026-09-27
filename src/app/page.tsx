@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { ChevronDown, Fingerprint, Hourglass, Search, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -11,9 +12,10 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { GroupCards, ResultList } from "@/components/result-view";
 import { Stat } from "@/components/stat";
 import { cn } from "@/lib/utils";
-import { dateLabel, DrawVerification, entries, Lottery, sampleCode } from "@/lib/lottery";
+import { dateLabel, drawModeMeta, drawModeOf, drawModes, DrawVerification, entries, Lottery, sampleCodes } from "@/lib/lottery";
 
 export default function Home() {
   const [query, setQuery] = useState("");
@@ -31,6 +33,9 @@ export default function Home() {
   const [entriesSaving, setEntriesSaving] = useState(false);
   const [entriesError, setEntriesError] = useState("");
   const [entriesSaved, setEntriesSaved] = useState(false);
+
+  const mode = result ? drawModeOf(result) : "lottery";
+  const modeMeta = drawModeMeta[mode];
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -134,8 +139,8 @@ export default function Home() {
               <Badge variant="secondary">公开信标</Badge>
               <span className="text-xs text-muted-foreground">结果可复算</span>
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">查询抽奖</h1>
-            <p className="max-w-xl text-sm leading-6 text-muted-foreground">输入编码，查看结果与可复算的信标记录。</p>
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">查询结果</h1>
+            <p className="max-w-xl text-sm leading-6 text-muted-foreground">输入编码，查看抽奖、随机排序或分组结果，以及可复算的信标记录。</p>
           </div>
 
           <form onSubmit={(event) => { event.preventDefault(); void lookup(); }} className="flex flex-col gap-3 sm:flex-row">
@@ -161,7 +166,8 @@ export default function Home() {
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="flex min-w-0 flex-col gap-3">
                     <div className="flex items-center gap-2">
-                      <Badge variant={result.status === "drawn" ? "default" : "secondary"}>{result.status === "drawn" ? "已开奖" : "进行中"}</Badge>
+                      <Badge variant={result.status === "drawn" ? "default" : "secondary"}>{result.status === "drawn" ? modeMeta.drawnBadge : "进行中"}</Badge>
+                      <Badge variant="outline">{modeMeta.label}</Badge>
                       <span className="font-mono text-xs text-muted-foreground">{result.code}</span>
                     </div>
                     <CardTitle className="text-2xl tracking-tight">{result.title}</CardTitle>
@@ -179,13 +185,13 @@ export default function Home() {
                     <div className="flex flex-wrap items-center justify-between gap-4">
                       <div className="flex flex-col gap-1">
                         <p className="text-sm font-medium">管理模式</p>
-                        <p className="text-xs leading-5 text-muted-foreground">开奖使用截止后 10 分钟的固定 drand 轮次，签名与结果会自动验证。</p>
+                        <p className="text-xs leading-5 text-muted-foreground">{modeMeta.label}的结果由截止后 10 分钟的固定 drand 轮次生成，签名与结果会自动验证。</p>
                       </div>
-                      <Button onClick={() => void drawNow()} disabled={drawing}>{drawing && <Spinner data-icon="inline-start" />}立即开奖</Button>
+                      <Button onClick={() => void drawNow()} disabled={drawing}>{drawing && <Spinner data-icon="inline-start" />}{modeMeta.action}</Button>
                     </div>
                     {Date.now() >= new Date(result.deadline).getTime() ? (
                       <p className="border-t pt-4 text-xs leading-5 text-muted-foreground">
-                        已过截止时间：{dateLabel(result.deadline)}，参与值已锁定，不可再修改，可直接开奖。
+                        已过截止时间：{dateLabel(result.deadline)}，参与值已锁定，不可再修改，可直接生成结果。
                       </p>
                     ) : (
                       <form
@@ -217,21 +223,22 @@ export default function Home() {
                 {result.status === "drawn" ? (
                   <div className="flex flex-col gap-3">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold">中奖结果</h3>
-                      <span className="font-mono text-xs text-muted-foreground">{result.winners.length} WINNERS</span>
+                      <h3 className="text-sm font-semibold">{modeMeta.resultTitle}</h3>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {mode === "group" ? `${result.groups?.length ?? 0} ${modeMeta.unit}` : `${result.winners.length} ${modeMeta.unit}`}
+                      </span>
                     </div>
-                    <div className="divide-y rounded-2xl border">
-                      {result.winners.map((winner, index) => (
-                        <div
-                          key={winner + "-" + index}
-                          style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
-                          className="animate-fade-in flex min-w-0 items-center gap-3 px-4 py-3"
-                        >
-                          <span className="grid size-6 shrink-0 place-items-center rounded-2xl bg-muted font-mono text-[10px] text-muted-foreground">{String(index + 1).padStart(2, "0")}</span>
-                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{winner}</span>
-                        </div>
-                      ))}
-                    </div>
+                    {mode === "group" ? (
+                      <GroupCards groups={result.groups ?? []} />
+                    ) : (
+                      <ResultList items={result.winners} />
+                    )}
+                    {mode === "shuffle" && (
+                      <p className="text-xs leading-5 text-muted-foreground">序号即随机顺序：全部参与值都会出现，且各出现一次。</p>
+                    )}
+                    {mode === "group" && (
+                      <p className="text-xs leading-5 text-muted-foreground">分组来自同一次随机排序：先随机打乱，再按顺序连续切分成 {result.groupCount ?? result.groups?.length ?? 0} 组，各组人数相差不超过 1。</p>
+                    )}
                   </div>
                 ) : (
                   <Empty className="bg-muted/50">
@@ -239,8 +246,8 @@ export default function Home() {
                       <EmptyMedia variant="icon">
                         <Hourglass />
                       </EmptyMedia>
-                      <EmptyTitle>开奖尚未开始</EmptyTitle>
-                      <EmptyDescription>截止后 10 分钟，可用管理链接开奖。</EmptyDescription>
+                      <EmptyTitle>{modeMeta.pendingTitle}</EmptyTitle>
+                      <EmptyDescription>{modeMeta.pendingHint}</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
                 )}
@@ -263,7 +270,7 @@ export default function Home() {
                             <span className="text-xs font-medium">独立验证</span>
                           </div>
                           <p className="text-xs leading-5 text-muted-foreground">
-                            {verification?.reason ?? "正在核对目标轮次、drand 签名、名单承诺、摘要与中奖结果。"}
+                            {verification?.reason ?? "正在核对目标轮次、drand 签名、名单承诺、结果模式、摘要与结果名单。"}
                           </p>
                         </div>
                         <Button size="sm" variant="outline" disabled={verifying} onClick={() => void verifyDraw(result.code)}>
@@ -273,12 +280,23 @@ export default function Home() {
                     )}
                     <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
                       <Stat label="参与值数量" value={String(result.entries.length)} />
-                      <Stat label="中奖名额" value={String(result.winnerCount)} />
-                      <Stat label="随机信标" value={String(result.draw?.round ?? "等待开奖")} />
+                      <Stat
+                        label={modeMeta.countStatLabel}
+                        value={
+                          mode === "group"
+                            ? String(result.groupCount ?? result.groups?.length ?? 0)
+                            : mode === "shuffle"
+                              ? String(result.entries.length)
+                              : String(result.winnerCount)
+                        }
+                      />
+                      <Stat label="结果模式" value={modeMeta.label} />
+                      <Stat label="随机信标" value={String(result.draw?.round ?? "等待生成")} />
                       <Stat label="算法版本" value={result.draw?.algorithm ?? "deterministic-v2"} />
                     </div>
                     {result.entriesCommitment && (
                       <div className="flex flex-col gap-1 rounded-2xl border bg-muted/40 p-4 font-mono text-[11px] leading-6 text-muted-foreground break-all">
+                        <p>mode: {mode}{mode === "group" ? ` (groupCount: ${result.groupCount ?? "?"})` : ""}</p>
                         <p>entriesCommitment: {result.entriesCommitment}</p>
                         <p>commitmentUpdatedAt: {result.commitmentUpdatedAt ?? "unknown"}</p>
                       </div>
@@ -305,11 +323,28 @@ export default function Home() {
                 <EmptyMedia variant="icon">
                   <Fingerprint />
                 </EmptyMedia>
-                <EmptyTitle>每场抽奖都有一份公开记录</EmptyTitle>
-                <EmptyDescription>输入编码即可查看结果与信标记录，或直接试试示例。</EmptyDescription>
+                <EmptyTitle>每种结果都有一份公开记录</EmptyTitle>
+                <EmptyDescription>输入编码即可查看抽奖、随机排序或分组结果与信标记录，也可以直接试试示例。</EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
-                <Button onClick={() => void lookup(sampleCode)}>查询示例 {sampleCode}</Button>
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex flex-wrap justify-center gap-3">
+                    {drawModes.map((sampleMode) => (
+                      <Button
+                        key={sampleMode}
+                        variant={sampleMode === "lottery" ? "default" : "outline"}
+                        onClick={() => void lookup(sampleCodes[sampleMode])}
+                      >
+                        {drawModeMeta[sampleMode].label}示例
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    只是想把名单打乱？用
+                    <Link href="/sort" className="font-medium text-foreground underline underline-offset-4">随机排序工具</Link>
+                    ，粘贴即出结果。
+                  </p>
+                </div>
               </EmptyContent>
             </Empty>
           )}

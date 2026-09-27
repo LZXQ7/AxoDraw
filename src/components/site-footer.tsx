@@ -24,7 +24,7 @@ export function SiteFooter() {
               <span className="text-sm font-semibold tracking-tight">AxoDraw</span>
             </div>
             <p className="text-xs leading-5 text-muted-foreground">
-              公开随机信标抽奖，结果人人可复算。
+              公开随机信标抽奖与随机排序，结果人人可复算。
             </p>
             <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <Sparkles data-icon="inline-start" className="size-3.5" />

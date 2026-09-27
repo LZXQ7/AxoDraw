@@ -1,5 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { QuicknetBeacon } from "@/lib/beacon";
+import { drawModeOf, sampleCodes, type DrawMode } from "@/lib/lottery";
+import { splitIntoGroups } from "@/lib/shuffle";
 import { loadLottery, persistLottery } from "@/lib/supabase";
 
 export const CURRENT_DRAW_ALGORITHM = "deterministic-v2" as const;
@@ -11,11 +13,17 @@ export type Lottery = {
   title: string;
   description: string;
   deadline: string;
+  /** 缺省视为 lottery：没有 mode 字段的旧记录保持原有语义。 */
+  mode?: DrawMode;
   winnerCount: number;
+  groupCount?: number;
   duplicatePolicy: "keep" | "dedupe";
   entries: string[];
   status: LotteryStatus;
+  /** lottery 模式为中奖名单；shuffle / group 模式为完整随机顺序。 */
   winners: string[];
+  /** 仅 group 模式：按随机顺序连续切分出的分组。 */
+  groups?: string[][];
   managementTokenHash: string;
   /**
    * Public snapshot hash of every field that affects the draw. This lets
@@ -35,6 +43,12 @@ export type Lottery = {
   };
 };
 
+export type DrawOutcome = {
+  digest: string;
+  winners: string[];
+  groups?: string[][];
+};
+
 type PublicLottery = Omit<Lottery, "managementTokenHash"> & {
   managementToken?: string;
 };
@@ -47,7 +61,10 @@ type NewLotteryInput = Pick<
   | "winnerCount"
   | "duplicatePolicy"
   | "entries"
->;
+> & {
+  mode?: DrawMode;
+  groupCount?: number;
+};
 
 const store = globalThis as typeof globalThis & {
   __axodraw?: Map<string, Lottery>;
@@ -55,7 +72,9 @@ const store = globalThis as typeof globalThis & {
 const lotteries = store.__axodraw ?? new Map<string, Lottery>();
 store.__axodraw = lotteries;
 
-const SAMPLE_CODE = "AXO-7K4M";
+const COMMITMENT_VERSION = "axodraw-commitment-v1";
+/** 随机排序 / 分组模式额外把 mode 与 groupCount 纳入承诺，使用新版本号。 */
+const MODE_COMMITMENT_VERSION = "axodraw-commitment-v2";
 const V2_BLOCK_DOMAIN = Buffer.from("axodraw-deterministic-v2\0", "utf8");
 const UINT256_SPACE = 1n << 256n;
 
@@ -63,7 +82,10 @@ export function hash(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-/** Canonical, versioned snapshot of every stored field that affects a draw. */
+/**
+ * Canonical, versioned snapshot of every stored field that affects a draw.
+ * lottery 模式沿用 commitment-v1 的字段与顺序，保证历史记录仍然可复算。
+ */
 export function computeEntriesCommitment(
   lottery: Pick<
     Lottery,
@@ -74,18 +96,33 @@ export function computeEntriesCommitment(
     | "winnerCount"
     | "duplicatePolicy"
     | "entries"
-  >,
+  > & { mode?: DrawMode; groupCount?: number },
 ) {
-  const canonical = JSON.stringify({
-    version: "axodraw-commitment-v1",
-    code: lottery.code,
-    title: lottery.title,
-    description: lottery.description,
-    deadline: lottery.deadline,
-    winnerCount: lottery.winnerCount,
-    duplicatePolicy: lottery.duplicatePolicy,
-    entries: lottery.entries,
-  });
+  const mode = drawModeOf(lottery);
+  const canonical =
+    mode === "lottery"
+      ? JSON.stringify({
+          version: COMMITMENT_VERSION,
+          code: lottery.code,
+          title: lottery.title,
+          description: lottery.description,
+          deadline: lottery.deadline,
+          winnerCount: lottery.winnerCount,
+          duplicatePolicy: lottery.duplicatePolicy,
+          entries: lottery.entries,
+        })
+      : JSON.stringify({
+          version: MODE_COMMITMENT_VERSION,
+          code: lottery.code,
+          title: lottery.title,
+          description: lottery.description,
+          deadline: lottery.deadline,
+          mode,
+          groupCount: mode === "group" ? lottery.groupCount ?? null : null,
+          winnerCount: lottery.winnerCount,
+          duplicatePolicy: lottery.duplicatePolicy,
+          entries: lottery.entries,
+        });
   return `sha256:${hash(canonical)}`;
 }
 
@@ -96,6 +133,23 @@ export function refreshEntriesCommitment(
   lottery.entriesCommitment = computeEntriesCommitment(lottery);
   lottery.commitmentUpdatedAt = updatedAt;
   return lottery.entriesCommitment;
+}
+
+/** 把一次无偏洗牌结果按模式解释为中奖名单 / 完整顺序 / 分组。 */
+function outcome(
+  lottery: Lottery,
+  digest: string,
+  order: string[],
+): DrawOutcome {
+  const mode = drawModeOf(lottery);
+  if (mode === "group") {
+    const groupCount = lottery.groupCount ?? 0;
+    return groupCount >= 2
+      ? { digest, winners: order, groups: splitIntoGroups(order, groupCount) }
+      : { digest, winners: order };
+  }
+  if (mode === "shuffle") return { digest, winners: order };
+  return { digest, winners: order.slice(0, lottery.winnerCount) };
 }
 
 function legacyV1Result(lottery: Lottery, randomness: string) {
@@ -116,10 +170,7 @@ function legacyV1Result(lottery: Lottery, randomness: string) {
     const j = Number(state % BigInt(i + 1));
     [available[i], available[j]] = [available[j], available[i]];
   }
-  return {
-    digest: `sha256:${digest}`,
-    winners: available.slice(0, lottery.winnerCount),
-  };
+  return outcome(lottery, `sha256:${digest}`, available);
 }
 
 /**
@@ -159,83 +210,140 @@ function deterministicV2Result(lottery: Lottery, randomness: string) {
     [available[i], available[j]] = [available[j], available[i]];
   }
 
-  return {
-    digest: `sha256:${digest}`,
-    winners: available.slice(0, lottery.winnerCount),
-  };
+  return outcome(lottery, `sha256:${digest}`, available);
 }
 
 export function computeDrawResult(
   lottery: Lottery,
   randomness: string,
   algorithm: DrawAlgorithm,
-) {
+): DrawOutcome {
   return algorithm === "deterministic-v1"
     ? legacyV1Result(lottery, randomness)
     : deterministicV2Result(lottery, randomness);
 }
 
-const sampleBase = {
-  code: SAMPLE_CODE,
-  title: "示例抽奖（演示数据）",
-  description:
-    "这是一条用于演示的示例数据，不代表任何真实活动；结果由 drand 公开信标真实生成，可独立核验抽奖方法与结果。",
-  deadline: "2024-06-15T12:00:00.000Z",
-  winnerCount: 3,
-  duplicatePolicy: "keep" as const,
-  entries: [
-    "service-001",
-    "service-002",
-    "service-003",
-    "service-004",
-    "service-005",
-  ],
-};
-const sampleRandomness =
+// 三个示例记录共用同一个真实信标：quicknet round 8550012。
+// 签名、randomness、摘要与结果全部由生产路径的算法算出来。
+const SAMPLE_DEADLINE = "2024-06-15T12:00:00.000Z";
+const SAMPLE_COMMITMENT_TIME = "2024-06-15T11:59:59.000Z";
+const SAMPLE_ROUND = 8_550_012;
+const SAMPLE_RANDOMNESS =
   "f876d09fc9438e7d53dafb9bd1f2f3c78fe4e85ad9d272e1f979aa572247fb7a";
-const sampleCommitment = computeEntriesCommitment(sampleBase);
-const sampleResult = deterministicV2Result(
+const SAMPLE_SIGNATURE =
+  "88f87a10205ed031a3ae1eec64c4780c9aa787a679788b6259d0b973ea061d612c6bfb395eafacc788feeb5be11b2f18";
+
+type SampleSpec = {
+  mode: DrawMode;
+  code: string;
+  title: string;
+  description: string;
+  winnerCount: number;
+  groupCount?: number;
+  entries: string[];
+};
+
+const sampleSpecs: SampleSpec[] = [
   {
-    ...sampleBase,
+    mode: "lottery",
+    code: sampleCodes.lottery,
+    title: "示例抽奖（演示数据）",
+    description:
+      "这是一条用于演示的示例数据，不代表任何真实活动；结果由 drand 公开信标真实生成，可独立核验抽奖方法与结果。",
+    winnerCount: 3,
+    entries: [
+      "service-001",
+      "service-002",
+      "service-003",
+      "service-004",
+      "service-005",
+    ],
+  },
+  {
+    mode: "shuffle",
+    code: sampleCodes.shuffle,
+    title: "示例：随机排序（演示数据）",
+    description:
+      "演示「随机排序」：8 个参与值被同一套无偏算法完全打乱，下面的顺序就是完整结果，可逐项复算。",
+    winnerCount: 8,
+    entries: [
+      "service-011",
+      "service-012",
+      "service-013",
+      "service-014",
+      "service-015",
+      "service-016",
+      "service-017",
+      "service-018",
+    ],
+  },
+  {
+    mode: "group",
+    code: sampleCodes.group,
+    title: "示例：分组随机排序（演示数据）",
+    description:
+      "演示「分组随机排序」：先随机排序，再按顺序均分成 3 组；8 个参与值分到 3 组，人数相差不超过 1。",
+    winnerCount: 8,
+    groupCount: 3,
+    entries: [
+      "service-021",
+      "service-022",
+      "service-023",
+      "service-024",
+      "service-025",
+      "service-026",
+      "service-027",
+      "service-028",
+    ],
+  },
+];
+
+function buildSampleLottery(spec: SampleSpec): Lottery {
+  const lottery: Lottery = {
+    code: spec.code,
+    title: spec.title,
+    description: spec.description,
+    deadline: SAMPLE_DEADLINE,
+    mode: spec.mode,
+    winnerCount: spec.winnerCount,
+    duplicatePolicy: "keep",
+    entries: spec.entries,
     status: "scheduled",
     winners: [],
     managementTokenHash: "sample",
-    entriesCommitment: sampleCommitment,
-    commitmentUpdatedAt: "2024-06-15T11:59:59.000Z",
-  },
-  sampleRandomness,
-);
+  };
+  if (spec.groupCount) lottery.groupCount = spec.groupCount;
+  lottery.entriesCommitment = computeEntriesCommitment(lottery);
+  lottery.commitmentUpdatedAt = SAMPLE_COMMITMENT_TIME;
 
-// 示例抽奖：信标来自 quicknet round 8550012；签名、randomness、摘要与
-// 名单均由生产路径使用的算法计算，不保留旧版有偏 LCG 的演示结果。
-const sampleLottery: Lottery = {
-  ...sampleBase,
-  status: "drawn",
-  winners: sampleResult.winners,
-  managementTokenHash: "sample",
-  entriesCommitment: sampleCommitment,
-  commitmentUpdatedAt: "2024-06-15T11:59:59.000Z",
-  draw: {
-    round: 8550012,
-    randomness: sampleRandomness,
-    signature:
-      "88f87a10205ed031a3ae1eec64c4780c9aa787a679788b6259d0b973ea061d612c6bfb395eafacc788feeb5be11b2f18",
+  const result = deterministicV2Result(lottery, SAMPLE_RANDOMNESS);
+  lottery.status = "drawn";
+  lottery.winners = result.winners;
+  if (result.groups) lottery.groups = result.groups;
+  lottery.draw = {
+    round: SAMPLE_ROUND,
+    randomness: SAMPLE_RANDOMNESS,
+    signature: SAMPLE_SIGNATURE,
     algorithm: CURRENT_DRAW_ALGORITHM,
     drawnAt: "2024-06-15T12:10:05.000Z",
-    digest: sampleResult.digest,
-    entriesCommitment: sampleCommitment,
-  },
-};
-
-function seedSampleLottery() {
-  const existing = lotteries.get(SAMPLE_CODE);
-  const legacy =
-    existing &&
-    (existing.draw?.algorithm !== CURRENT_DRAW_ALGORITHM ||
-      existing.draw?.digest !== sampleLottery.draw?.digest);
-  if (!existing || legacy) lotteries.set(SAMPLE_CODE, sampleLottery);
+    digest: result.digest,
+    entriesCommitment: lottery.entriesCommitment,
+  };
+  return lottery;
 }
-seedSampleLottery();
+
+function seedSampleLotteries() {
+  for (const spec of sampleSpecs) {
+    const sample = buildSampleLottery(spec);
+    const existing = lotteries.get(spec.code);
+    const legacy =
+      existing &&
+      (existing.draw?.algorithm !== CURRENT_DRAW_ALGORITHM ||
+        existing.draw?.digest !== sample.draw?.digest);
+    if (!existing || legacy) lotteries.set(spec.code, sample);
+  }
+}
+seedSampleLotteries();
 
 export function publicLottery(lottery: Lottery): PublicLottery {
   const { managementTokenHash, ...safe } = lottery;
@@ -247,13 +355,17 @@ export function createLottery(input: NewLotteryInput) {
   // 64 random bits keep accidental collisions negligible even at large scale.
   const code = `AXO-${randomBytes(8).toString("hex").toUpperCase()}`;
   const managementToken = randomBytes(24).toString("base64url");
+  const mode = drawModeOf(input);
   const lottery: Lottery = {
     ...input,
+    mode,
     code,
     status: "scheduled",
     winners: [],
     managementTokenHash: hash(managementToken),
   };
+  if (mode === "group") lottery.groupCount = input.groupCount;
+  else delete lottery.groupCount;
   refreshEntriesCommitment(lottery);
   return { lottery, managementToken };
 }
@@ -295,6 +407,8 @@ export function drawLottery(lottery: Lottery, beacon: QuicknetBeacon) {
     CURRENT_DRAW_ALGORITHM,
   );
   lottery.winners = result.winners;
+  if (result.groups) lottery.groups = result.groups;
+  else delete lottery.groups;
   lottery.status = "drawn";
   lottery.draw = {
     round: beacon.round,

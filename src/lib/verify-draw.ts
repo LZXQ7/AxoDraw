@@ -1,4 +1,5 @@
 import type { QuicknetBeacon } from "@/lib/beacon";
+import { isDrawMode } from "@/lib/lottery";
 import {
   computeDrawResult,
   computeEntriesCommitment,
@@ -17,10 +18,12 @@ type DrawVerificationChecks = {
   beaconSignature: boolean;
   commitmentBeforeDeadline: boolean;
   commitmentMatches: boolean;
+  modeSupported: boolean;
   algorithmSupported: boolean;
   fairAlgorithm: boolean;
   digestMatches: boolean;
   winnersMatch: boolean;
+  groupsMatch: boolean;
 };
 
 export type DrawRecordVerification = {
@@ -30,6 +33,38 @@ export type DrawRecordVerification = {
   expectedCommitment: string;
   reason: string;
 };
+
+const failedChecks: DrawVerificationChecks = {
+  expectedRound: false,
+  beaconSignature: false,
+  commitmentBeforeDeadline: false,
+  commitmentMatches: false,
+  modeSupported: false,
+  algorithmSupported: false,
+  fairAlgorithm: false,
+  digestMatches: false,
+  winnersMatch: false,
+  groupsMatch: false,
+};
+
+function sameList(left: string[] | undefined, right: string[] | undefined) {
+  if (!left || !right) return false;
+  return (
+    left.length === right.length &&
+    left.every((item, index) => item === right[index])
+  );
+}
+
+function sameGroups(
+  left: string[][] | undefined,
+  right: string[][] | undefined,
+) {
+  if (!left || !right) return false;
+  return (
+    left.length === right.length &&
+    left.every((group, index) => sameList(group, right[index]))
+  );
+}
 
 export function verifyDrawRecord(
   lottery: Lottery,
@@ -41,16 +76,7 @@ export function verifyDrawRecord(
     return {
       verified: false,
       fair: false,
-      checks: {
-        expectedRound: false,
-        beaconSignature: false,
-        commitmentBeforeDeadline: false,
-        commitmentMatches: false,
-        algorithmSupported: false,
-        fairAlgorithm: false,
-        digestMatches: false,
-        winnersMatch: false,
-      },
+      checks: { ...failedChecks },
       expectedCommitment: computeEntriesCommitment(lottery),
       reason: "抽奖尚未开奖",
     };
@@ -59,6 +85,8 @@ export function verifyDrawRecord(
   const algorithm = draw.algorithm;
   const algorithmSupported = supportedAlgorithms.has(algorithm);
   const fairAlgorithm = algorithm === CURRENT_DRAW_ALGORITHM;
+  // 没有 mode 字段的历史记录视为 lottery；出现未知 mode 说明记录被改写。
+  const modeSupported = lottery.mode === undefined || isDrawMode(lottery.mode);
   const expectedCommitment = computeEntriesCommitment(lottery);
   const commitmentUpdatedAt = new Date(
     lottery.commitmentUpdatedAt ?? "",
@@ -72,18 +100,20 @@ export function verifyDrawRecord(
 
   let digestMatches = false;
   let winnersMatch = false;
-  if (algorithmSupported) {
+  let groupsMatch = false;
+  if (algorithmSupported && modeSupported) {
     const expectedResult = computeDrawResult(
       lottery,
       beacon.randomness,
       algorithm,
     );
     digestMatches = draw.digest === expectedResult.digest;
-    winnersMatch =
-      lottery.winners.length === expectedResult.winners.length &&
-      lottery.winners.every(
-        (winner, index) => winner === expectedResult.winners[index],
-      );
+    winnersMatch = sameList(lottery.winners, expectedResult.winners);
+    // 只有分组模式才有分组结果；其余模式（含旧记录）不因此失败。
+    groupsMatch =
+      lottery.mode === "group"
+        ? sameGroups(lottery.groups, expectedResult.groups)
+        : true;
   }
 
   const checks = {
@@ -93,10 +123,12 @@ export function verifyDrawRecord(
       draw.randomness === beacon.randomness,
     commitmentBeforeDeadline,
     commitmentMatches,
+    modeSupported,
     algorithmSupported,
     fairAlgorithm,
     digestMatches,
     winnersMatch,
+    groupsMatch,
   };
   const verified = Object.values(checks).every(Boolean);
 
@@ -106,7 +138,7 @@ export function verifyDrawRecord(
     checks,
     expectedCommitment,
     reason: verified
-      ? "轮次、信标签名、参与值承诺、无偏算法、摘要和中奖名单均验证通过"
+      ? "轮次、信标签名、参与值承诺、结果模式、无偏算法、摘要与结果名单均验证通过"
       : fairAlgorithm
         ? "至少一项验证未通过"
         : "旧版 deterministic-v1 存在顺序偏差，不能视为公平结果",

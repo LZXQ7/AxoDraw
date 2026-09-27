@@ -64,7 +64,7 @@ export function TimelineDiagram() {
 /** 结果生成：参与值 + 随机信标 → 确定性算法 → 名单与摘要 */
 export function ResultDiagram() {
   return (
-    <svg viewBox="0 0 920 200" role="img" aria-label="中奖结果生成示意" className="h-auto w-full">
+    <svg viewBox="0 0 920 200" role="img" aria-label="结果生成示意" className="h-auto w-full">
       <defs>
         <marker id="deter-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M 0 0 L 10 5 L 0 10 z" style={{ fill: tone.mutedFg }} />
@@ -90,11 +90,12 @@ export function ResultDiagram() {
       <text x={455} y={128} textAnchor="middle" fontSize={12} style={text(tone.mutedFg)}>HMAC + 拒绝采样</text>
       <path d="M 550 92 L 596 92" stroke={tone.mutedFg} strokeWidth={1.5} fill="none" markerEnd="url(#deter-arrow)" />
       <rect x={600} y={40} width={250} height={104} rx={12} style={{ fill: tone.card, stroke: tone.border, strokeWidth: 1.5 }} />
-      <text x={620} y={66} fontSize={15} style={text(tone.fg)}>中奖名单</text>
+      <text x={620} y={66} fontSize={15} style={text(tone.fg)}>结果名单</text>
       <text x={620} y={92} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>01 · service-002</text>
       <text x={620} y={109} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>02 · service-003</text>
       <text x={620} y={126} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>03 · service-001</text>
-      <text x={620} y={166} fontSize={11} style={{ ...mono, ...text(tone.mutedFg) }}>digest = sha256:9dc4425a…</text>
+      <text x={620} y={162} fontSize={11} style={text(tone.mutedFg)}>抽奖取前 N · 排序取全序 · 分组连续均分</text>
+      <text x={620} y={182} fontSize={11} style={{ ...mono, ...text(tone.mutedFg) }}>digest = sha256:9dc4425a…</text>
     </svg>
   );
 }

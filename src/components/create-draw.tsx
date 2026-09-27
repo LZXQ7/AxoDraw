@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useCallback, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowUpRight, Check, Sparkles, Upload } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -84,7 +85,7 @@ export function CreateDraw() {
                   <CardContent className="flex flex-col gap-6">
                     <FieldGroup>
                       <Field>
-                        <FieldLabel htmlFor="title">抽奖标题</FieldLabel>
+                        <FieldLabel htmlFor="title">标题</FieldLabel>
                         <Input id="title" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="例如：八月社区服务体验名额" />
                       </Field>
                       <Field>
@@ -100,7 +101,7 @@ export function CreateDraw() {
                       </Field>
                       <Field>
                         <FieldLabel htmlFor="winnerCount">中奖人数</FieldLabel>
-                        <Input id="winnerCount" type="number" min="1" max="100" required value={form.winnerCount} onChange={(e) => setForm({ ...form, winnerCount: e.target.value })} />
+                        <Input id="winnerCount" type="number" min="1" max={Math.max(2, stats.total)} required value={form.winnerCount} onChange={(e) => setForm({ ...form, winnerCount: e.target.value })} />
                       </Field>
                     </div>
 
@@ -202,7 +203,7 @@ export function CreateDraw() {
             <CardContent className="flex flex-col gap-5">
               <div className="flex gap-3">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted font-mono text-[10px] text-muted-foreground">01</span>
-                <p className="text-sm leading-5">标题、截止时间和名额创建后不可修改；截止前可用管理链接修改参与值。</p>
+                <p className="text-sm leading-5">标题、截止时间和中奖人数创建后不可修改；截止前可用管理链接修改参与值。</p>
               </div>
               <div className="flex gap-3">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted font-mono text-[10px] text-muted-foreground">02</span>
@@ -211,6 +212,12 @@ export function CreateDraw() {
               <div className="flex gap-3">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted font-mono text-[10px] text-muted-foreground">03</span>
                 <p className="text-sm leading-5">开奖使用公开信标，任何人都能复算结果。</p>
+              </div>
+              <div className="flex flex-col gap-2 border-t pt-5">
+                <p className="text-xs leading-5 text-muted-foreground">只想把名单打乱、不需要公开记录？用随机排序工具，粘贴即出结果。</p>
+                <Button variant="outline" size="sm" className="w-fit" nativeButton={false} render={<Link href="/sort" />}>
+                  随机排序工具<ArrowUpRight data-icon="inline-end" />
+                </Button>
               </div>
             </CardContent>
           </Card>

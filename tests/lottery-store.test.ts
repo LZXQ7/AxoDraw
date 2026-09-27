@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseDrawRequestBody } from "../src/lib/draw-request";
+import { drawModeOf, drawModes, sampleCodes } from "../src/lib/lottery";
+import { splitIntoGroups } from "../src/lib/shuffle";
+import {
+  InvalidLotteryParamsError,
+  parseLotteryParams,
+} from "../src/lib/lottery-params";
 import {
   computeDrawResult,
   computeEntriesCommitment,
   createLottery,
   drawLottery,
+  findLottery,
   hash,
   type Lottery,
 } from "../src/lib/lottery-store";
@@ -181,4 +188,174 @@ test("draw request accepts authentication only", () => {
     );
   }
   assert.throws(() => parseDrawRequestBody(null), /请求格式无效/);
+});
+
+const beacon = (randomness: string) => ({
+  round: 1,
+  randomness,
+  signature: "11".repeat(48),
+  verified: true as const,
+});
+
+test("结果参数校验覆盖三种模式并兼容旧调用", () => {
+  assert.deepEqual(parseLotteryParams({ winnerCount: 2 }, 5), {
+    mode: "lottery",
+    winnerCount: 2,
+  });
+  assert.deepEqual(parseLotteryParams({ mode: "shuffle" }, 5), {
+    mode: "shuffle",
+    winnerCount: 5,
+  });
+  assert.deepEqual(
+    parseLotteryParams({ mode: "group", groupCount: 3 }, 8),
+    { mode: "group", winnerCount: 8, groupCount: 3 },
+  );
+  assert.throws(
+    () => parseLotteryParams({ mode: "lottery", winnerCount: 6 }, 5),
+    /中奖人数需在 1 与参与值数量之间/,
+  );
+  assert.throws(
+    () => parseLotteryParams({ mode: "group", groupCount: 1 }, 8),
+    /分组数需在 2 与参与值数量之间/,
+  );
+  assert.throws(
+    () => parseLotteryParams({ mode: "group", groupCount: 9 }, 8),
+    /分组数需在 2 与参与值数量之间/,
+  );
+  assert.throws(
+    () => parseLotteryParams({ mode: "sort" }, 5),
+    InvalidLotteryParamsError,
+  );
+});
+
+test("创建时按模式规范化参数", () => {
+  const base = {
+    title: "t",
+    description: "",
+    deadline: "2030-01-01T00:00:00.000Z",
+    duplicatePolicy: "keep" as const,
+  };
+  const shuffle = createLottery({
+    ...base,
+    mode: "shuffle",
+    winnerCount: 3,
+    groupCount: 4,
+    entries: ["a", "b", "c"],
+  }).lottery;
+  assert.equal(shuffle.mode, "shuffle");
+  assert.equal(shuffle.groupCount, undefined);
+
+  const group = createLottery({
+    ...base,
+    mode: "group",
+    winnerCount: 4,
+    groupCount: 2,
+    entries: ["a", "b", "c", "d"],
+  }).lottery;
+  assert.equal(drawModeOf(group), "group");
+  assert.equal(group.groupCount, 2);
+});
+
+test("shuffle 模式输出不重不漏的完整随机顺序", () => {
+  const lottery = fixture({
+    mode: "shuffle",
+    winnerCount: 5,
+    entries: ["a", "b", "c", "d", "e"],
+  });
+  const result = computeDrawResult(lottery, hash("shuffle"), "deterministic-v2");
+  assert.equal(result.groups, undefined);
+  assert.equal(result.winners.length, 5);
+  assert.deepEqual([...result.winners].sort(), ["a", "b", "c", "d", "e"]);
+});
+
+test("group 模式把完整随机顺序均分成各组且可复算", () => {
+  const lottery = fixture({
+    mode: "group",
+    groupCount: 3,
+    winnerCount: 8,
+    entries: ["a", "b", "c", "d", "e", "f", "g", "h"],
+  });
+  const result = computeDrawResult(lottery, hash("group"), "deterministic-v2");
+  assert.deepEqual(result.groups?.map((group) => group.length), [3, 3, 2]);
+  assert.deepEqual(
+    result.groups?.flat().sort(),
+    [...lottery.entries].sort(),
+  );
+  assert.deepEqual(result.winners, result.groups?.flat());
+  assert.deepEqual(
+    computeDrawResult(lottery, hash("group"), "deterministic-v2").groups,
+    result.groups,
+  );
+});
+
+test("splitIntoGroups 各组人数相差不超过 1 且覆盖全部参与值", () => {
+  const items = Array.from({ length: 7 }, (_, index) => `item-${index}`);
+  assert.deepEqual(splitIntoGroups(items, 3).map((group) => group.length), [
+    3, 2, 2,
+  ]);
+  assert.deepEqual(
+    splitIntoGroups(items, 7),
+    items.map((item) => [item]),
+  );
+});
+
+test("分组结果使用 commitment-v2，分组或模式被改写即验证失败", () => {
+  const lottery = fixture({
+    mode: "group",
+    groupCount: 2,
+    winnerCount: 4,
+    entries: ["a", "b", "c", "d"],
+  });
+  const record = beacon("00".repeat(32));
+  drawLottery(lottery, record);
+  assert.equal(
+    lottery.draw?.entriesCommitment,
+    computeEntriesCommitment(lottery),
+  );
+  assert.equal(verifyDrawRecord(lottery, record, 1).verified, true);
+
+  lottery.groups![0][0] = "attacker";
+  assert.equal(verifyDrawRecord(lottery, record, 1).checks.groupsMatch, false);
+
+  lottery.groups = computeDrawResult(lottery, record.randomness, "deterministic-v2").groups;
+  assert.equal(verifyDrawRecord(lottery, record, 1).verified, true);
+
+  lottery.mode = "shuffle";
+  const tampered = verifyDrawRecord(lottery, record, 1);
+  assert.equal(tampered.checks.commitmentMatches, false);
+  assert.equal(tampered.verified, false);
+
+  lottery.mode = "unknown" as Lottery["mode"];
+  assert.equal(verifyDrawRecord(lottery, record, 1).checks.modeSupported, false);
+});
+
+test("没有 mode 字段的旧记录仍按抽奖语义验证", () => {
+  const lottery = fixture();
+  assert.equal(lottery.mode, undefined);
+  const record = beacon("02".repeat(32));
+  drawLottery(lottery, record);
+  assert.equal(lottery.groups, undefined);
+  assert.equal(computeEntriesCommitment(lottery), lottery.entriesCommitment);
+  assert.equal(verifyDrawRecord(lottery, record, 1).verified, true);
+});
+
+test("三种模式的示例记录自洽", () => {
+  for (const mode of drawModes) {
+    const sample = findLottery(sampleCodes[mode]);
+    assert.ok(sample, `missing sample for ${mode}`);
+    assert.equal(sample.status, "drawn");
+    assert.equal(drawModeOf(sample), mode);
+    const expected =
+      mode === "lottery" ? sample.winnerCount : sample.entries.length;
+    assert.equal(sample.winners.length, expected);
+    if (mode === "group") {
+      assert.equal(sample.groups?.length, sample.groupCount);
+      assert.deepEqual(
+        sample.groups?.flat().sort(),
+        [...sample.entries].sort(),
+      );
+    } else {
+      assert.equal(sample.groups, undefined);
+    }
+  }
 });
