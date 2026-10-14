@@ -14,9 +14,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { GroupCards, ResultList } from "@/components/result-view";
 import { entries } from "@/lib/lottery";
-import { shuffle, splitIntoGroups } from "@/lib/shuffle";
+import { pickWinners, shuffle, splitIntoGroups } from "@/lib/shuffle";
 
-type SortResult = { order: string[]; groups?: string[][] };
+type SortResult = { order: string[]; groups?: string[][]; winners?: string[] };
 
 const sampleItems = Array.from({ length: 8 }, (_, index) => `成员 ${String(index + 1).padStart(2, "0")}`).join("\n");
 
@@ -26,12 +26,22 @@ function formatResult(result: SortResult) {
       .map((group, groupIndex) => `第 ${groupIndex + 1} 组\n${group.map((item) => `- ${item}`).join("\n")}`)
       .join("\n\n");
   }
+  if (result.winners) {
+    return [
+      `中奖名单（${result.winners.length} 人）`,
+      result.winners.map((item, index) => `${index + 1}. ${item}`).join("\n"),
+      "",
+      "完整随机顺序",
+      result.order.map((item, index) => `${index + 1}. ${item}`).join("\n"),
+    ].join("\n");
+  }
   return result.order.map((item, index) => `${index + 1}. ${item}`).join("\n");
 }
 
 export function ShuffleTool() {
   const [entriesText, setEntriesText] = useState("");
   const [groupCountText, setGroupCountText] = useState("");
+  const [winnerCountText, setWinnerCountText] = useState("");
   const [dedupe, setDedupe] = useState(false);
   const [result, setResult] = useState<SortResult | null>(null);
   const [error, setError] = useState("");
@@ -71,12 +81,25 @@ export function ShuffleTool() {
       setError("分组数需在 2 与参与值数量之间");
       return;
     }
+    const rawWinners = winnerCountText.trim();
+    const winnerCount = rawWinners === "" ? 0 : Number(rawWinners);
+    if (winnerCount !== 0 && (!Number.isInteger(winnerCount) || winnerCount < 1 || winnerCount > items.length)) {
+      setResult(null);
+      setError("中奖人数需在 1 与参与值数量之间");
+      return;
+    }
+    if (groupCount >= 2 && winnerCount >= 1) {
+      setResult(null);
+      setError("分组与抽奖只能选一个，请清空另一个再试");
+      return;
+    }
     setError("");
     setCopied(false);
     const order = shuffle(items);
     setResult({
       order,
       groups: groupCount >= 2 ? splitIntoGroups(order, groupCount) : undefined,
+      winners: winnerCount >= 1 ? pickWinners(order, winnerCount) : undefined,
     });
   }
 
@@ -98,11 +121,11 @@ export function ShuffleTool() {
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2.5">
               <Badge variant="secondary">本地即时</Badge>
-              <span className="text-xs text-muted-foreground">无需发起、无需登录</span>
+              <span className="text-xs text-muted-foreground">无需截止时间、无需登录</span>
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">随机排序</h1>
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">随机排序与即时抽奖</h1>
             <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-              把名单粘进来，点一下就打乱全部条目；填了分组数则先随机排序，再均分成多组。结果在浏览器本地生成，随刷随用。
+              把名单粘进来，点一下就打乱全部条目；填分组数则先随机排序再均分成多组，填中奖人数则按同一套无偏洗牌取前 N 名中奖。名单设置好直接开，不用等截止时间。
             </p>
           </div>
 
@@ -152,23 +175,37 @@ export function ShuffleTool() {
                     min="2"
                     max={Math.max(2, stats.total)}
                     value={groupCountText}
-                    onChange={(event) => { setGroupCountText(event.target.value); setResult(null); setError(""); }}
+                    onChange={(event) => { setGroupCountText(event.target.value); setWinnerCountText(""); setResult(null); setError(""); }}
                     placeholder="留空 = 只随机排序"
                   />
                   <FieldDescription>填 2 以上会先随机排序，再把全部条目连续均分成这么多组，各组人数相差不超过 1。</FieldDescription>
                 </Field>
-                <Field orientation="horizontal">
-                  <FieldContent>
-                    <FieldLabel htmlFor="sort-dedupe">自动去重</FieldLabel>
-                    <FieldDescription>开启后重复条目只保留一条。</FieldDescription>
-                  </FieldContent>
-                  <Checkbox
-                    id="sort-dedupe"
-                    checked={dedupe}
-                    onCheckedChange={(checked) => { setDedupe(checked); setResult(null); setError(""); }}
+                <Field>
+                  <FieldLabel htmlFor="sort-winner-count">中奖人数 <span className="font-normal text-muted-foreground">可选</span></FieldLabel>
+                  <Input
+                    id="sort-winner-count"
+                    type="number"
+                    min="1"
+                    max={Math.max(1, stats.total)}
+                    value={winnerCountText}
+                    onChange={(event) => { setWinnerCountText(event.target.value); setGroupCountText(""); setResult(null); setError(""); }}
+                    placeholder="留空 = 不抽奖"
                   />
+                  <FieldDescription>填了就取无偏洗牌结果的前 N 名作为中奖名单，与分组数互斥。</FieldDescription>
                 </Field>
               </div>
+
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel htmlFor="sort-dedupe">自动去重</FieldLabel>
+                  <FieldDescription>开启后重复条目只保留一条。</FieldDescription>
+                </FieldContent>
+                <Checkbox
+                  id="sort-dedupe"
+                  checked={dedupe}
+                  onCheckedChange={(checked) => { setDedupe(checked); setResult(null); setError(""); }}
+                />
+              </Field>
 
               {error && (
                 <Alert variant="destructive" className="animate-fade-in">
@@ -185,14 +222,14 @@ export function ShuffleTool() {
                 {(entriesText || result) && (
                   <Button
                     variant="ghost"
-                    onClick={() => { setEntriesText(""); setGroupCountText(""); setResult(null); setError(""); }}
+                    onClick={() => { setEntriesText(""); setGroupCountText(""); setWinnerCountText(""); setResult(null); setError(""); }}
                   >
                     <Eraser data-icon="inline-start" />清空
                   </Button>
                 )}
                 <Button onClick={run} disabled={stats.total < 1}>
                   {result ? <Dices data-icon="inline-start" /> : <Shuffle data-icon="inline-start" />}
-                  {result ? "再排一次" : "开始随机排序"}
+                  {result ? "再来一次" : winnerCountText.trim() !== "" ? "立即抽奖" : "开始随机排序"}
                 </Button>
               </div>
             </CardFooter>
@@ -205,9 +242,9 @@ export function ShuffleTool() {
                   <div className="flex min-w-0 flex-col gap-3">
                     <div className="flex items-center gap-2">
                       <Badge>已完成</Badge>
-                      <Badge variant="outline">{result.groups ? "分组随机排序" : "随机排序"}</Badge>
+                      <Badge variant="outline">{result.groups ? "分组随机排序" : result.winners ? "即时抽奖" : "随机排序"}</Badge>
                     </div>
-                    <CardTitle className="text-2xl tracking-tight">{result.groups ? "分组结果" : "随机顺序"}</CardTitle>
+                    <CardTitle className="text-2xl tracking-tight">{result.groups ? "分组结果" : result.winners ? "中奖名单" : "随机顺序"}</CardTitle>
                     <CardDescription>本地生成，刷新页面即消失；想留档请复制结果。</CardDescription>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => void copyResult()}>
@@ -216,14 +253,25 @@ export function ShuffleTool() {
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent className="flex flex-col gap-3 pt-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">{result.groups ? "分组" : "顺序"}</h3>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {result.groups ? `${result.groups.length} GROUPS` : `${result.order.length} ITEMS`}
-                  </span>
+              <CardContent className="flex flex-col gap-6 pt-6">
+                {result.winners && (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold">中奖名单</h3>
+                      <span className="font-mono text-xs text-muted-foreground">{result.winners.length} WINNERS</span>
+                    </div>
+                    <ResultList items={result.winners} />
+                  </div>
+                )}
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">{result.groups ? "分组" : result.winners ? "完整随机顺序" : "顺序"}</h3>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {result.groups ? `${result.groups.length} GROUPS` : `${result.order.length} ITEMS`}
+                    </span>
+                  </div>
+                  {result.groups ? <GroupCards groups={result.groups} /> : <ResultList items={result.order} />}
                 </div>
-                {result.groups ? <GroupCards groups={result.groups} /> : <ResultList items={result.order} />}
               </CardContent>
             </Card>
           ) : (
@@ -232,8 +280,8 @@ export function ShuffleTool() {
                 <EmptyMedia variant="icon">
                   <ListOrdered />
                 </EmptyMedia>
-                <EmptyTitle>填入名单，一键打乱</EmptyTitle>
-                <EmptyDescription>不需要截止时间、管理链接或等待开奖；需要可公开复算的结果时再用「发起抽奖」。</EmptyDescription>
+                <EmptyTitle>填入名单，一键抽奖或打乱</EmptyTitle>
+                <EmptyDescription>不需要截止时间、管理链接或等待开奖；填中奖人数就是抽奖，留空就是排序。需要可公开复算的结果时再用「发起抽奖」。</EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}
@@ -248,8 +296,8 @@ export function ShuffleTool() {
             <CardContent className="flex flex-col gap-5">
               {[
                 { title: "粘贴名单", text: "一行一个，也可以直接上传 .txt / .csv 文件。" },
-                { title: "点开始随机排序", text: "需要分组就填分组数，先随机排序再均分成多组。" },
-                { title: "复制结果", text: "结果留在浏览器里；点「再排一次」可以换一组顺序。" },
+                { title: "填中奖人数或分组数", text: "填中奖人数 = 抽奖，取前 N 名中奖；填分组数 = 均分成多组；都留空就只随机排序。" },
+                { title: "复制结果", text: "结果留在浏览器里；点「再来一次」可以换一组顺序。" },
               ].map((step, index) => (
                 <div key={step.title} className="flex gap-3">
                   <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted font-mono text-[10px] text-muted-foreground">0{index + 1}</span>

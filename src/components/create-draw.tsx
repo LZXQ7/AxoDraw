@@ -214,9 +214,9 @@ export function CreateDraw() {
                 <p className="text-sm leading-5">开奖使用公开信标，任何人都能复算结果。</p>
               </div>
               <div className="flex flex-col gap-2 border-t pt-5">
-                <p className="text-xs leading-5 text-muted-foreground">只想把名单打乱、不需要公开记录？用随机排序工具，粘贴即出结果。</p>
+                <p className="text-xs leading-5 text-muted-foreground">不想等截止时间、也不需要公开记录？用即时工具，粘贴名单填上中奖人数就直接开奖。</p>
                 <Button variant="outline" size="sm" className="w-fit" nativeButton={false} render={<Link href="/sort" />}>
-                  随机排序工具<ArrowUpRight data-icon="inline-end" />
+                  即时抽奖 / 随机排序<ArrowUpRight data-icon="inline-end" />
                 </Button>
               </div>
             </CardContent>

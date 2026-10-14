@@ -56,3 +56,22 @@ export function splitIntoGroups<T>(
   }
   return groups;
 }
+
+/**
+ * 抽奖：取同一次无偏洗牌结果的前 winnerCount 项作为中奖名单。
+ * 与服务端 deterministic-v2「随机抽奖取前 N 项」的语义一致，
+ * 只是随机源来自浏览器 crypto，没有公开信标与承诺记录。
+ */
+export function pickWinners<T>(
+  order: readonly T[],
+  winnerCount: number,
+): T[] {
+  if (
+    !Number.isInteger(winnerCount) ||
+    winnerCount < 1 ||
+    winnerCount > order.length
+  ) {
+    throw new Error("winnerCount 必须是 1 到条目数之间的整数");
+  }
+  return order.slice(0, winnerCount);
+}

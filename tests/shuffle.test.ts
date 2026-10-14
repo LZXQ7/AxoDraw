@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import test from "node:test";
 import { GroupCards, ResultList } from "../src/components/result-view";
-import { cryptoRandomInt, shuffle, shuffleWith } from "../src/lib/shuffle";
+import { cryptoRandomInt, pickWinners, shuffle, shuffleWith } from "../src/lib/shuffle";
 
 test("shuffleWith 按 Fisher–Yates 逐位使用随机下标", () => {
   const bounds: number[] = [];
@@ -59,4 +59,38 @@ test("多次洗牌会产生多种排列", () => {
     orders.add(shuffle(["a", "b", "c", "d"]).join(""));
   }
   assert.ok(orders.size > 12, `只出现了 ${orders.size} 种排列`);
+});
+
+test("pickWinners 取洗牌结果的前 N 项且不修改输入", () => {
+  const order = ["甲", "乙", "丙", "丁"];
+  assert.deepEqual(pickWinners(order, 2), ["甲", "乙"]);
+  assert.deepEqual(pickWinners(order, 4), order);
+  assert.deepEqual(order, ["甲", "乙", "丙", "丁"]);
+});
+
+test("pickWinners 拒绝越界或非整数人数", () => {
+  const order = ["甲", "乙", "丙"];
+  for (const bad of [0, -1, 4, 1.5, Number.NaN]) {
+    assert.throws(() => pickWinners(order, bad), /winnerCount 必须是 1 到条目数之间的整数/);
+  }
+});
+
+test("28 人抽 12 人：中奖名单是洗牌前 12 项，且全部条目不重不漏", () => {
+  const people = Array.from({ length: 28 }, (_, index) => `成员 ${String(index + 1).padStart(2, "0")}`);
+  const seen = new Set<string>();
+  for (let round = 0; round < 50; round += 1) {
+    const order = shuffle(people);
+    const winners = pickWinners(order, 12);
+    assert.equal(winners.length, 12);
+    assert.deepEqual(winners, order.slice(0, 12));
+    // 中奖名单必须是原名单的子集，且组内不重复
+    assert.equal(new Set(winners).size, 12);
+    assert.ok(winners.every((person) => people.includes(person)));
+    // 完整顺序覆盖全部 28 人，不重不漏
+    assert.equal(order.length, 28);
+    assert.deepEqual([...order].sort(), [...people].sort());
+    seen.add(winners.join("|"));
+  }
+  // 12/28 的抽样空间极大，50 轮不该出现完全相同的排列
+  assert.ok(seen.size > 40, `只出现了 ${seen.size} 种中奖组合`);
 });
